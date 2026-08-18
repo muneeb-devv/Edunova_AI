@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}EduNova AI — Learn, Quiz, Grow{% endblock %}
+{% block page_class %}page-landing{% endblock %}
+{% block content %}
+<section class="hero">
+    <div class="hero-wordmark"><span class="brand-mark">✦</span> EduNova AI</div>
+    <div class="hero-eyebrow">AN INTELLIGENT E-LEARNING &amp; ASSESSMENT PLATFORM</div>
+    <h1 class="hero-title">A quiet corner<br>to actually <em>learn</em> the subject,<br>not just pass the quiz.</h1>
+    <p class="hero-sub">Read the notes, sit the five-question check, and ask the AI tutor whenever something doesn't click. Your progress is saved — no cramming required.</p>
+    <div class="hero-actions">
+        <a href="{{ url_for('register') }}" class="btn btn-primary">Create your account</a>
+        <a href="{{ url_for('login') }}" class="btn btn-ghost">I already have one</a>
+    </div>
+</section>
+
+<section class="landing-grid">
+    <div class="landing-card">
+        <span class="landing-card-index">01</span>
+        <h3>Read</h3>
+        <p>Short, focused notes for C++, Physics, and ICT — no fluff, just what you need to know.</p>
+    </div>
+    <div class="landing-card">
+        <span class="landing-card-index">02</span>
+        <h3>Check</h3>
+        <p>A five-question quiz per course, graded instantly, with a clear breakdown of what you missed.</p>
+    </div>
+    <div class="landing-card">
+        <span class="landing-card-index">03</span>
+        <h3>Ask</h3>
+        <p>Stuck on a concept? The AI tutor explains it a different way until it makes sense.</p>
+    </div>
+</section>
+{% endblock %}

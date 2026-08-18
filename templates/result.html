@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Result — {{ course.title }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="page-eyebrow">RESULT</div>
+    <h1>{{ course.title }} — {{ score }}/{{ total }}</h1>
+    <p class="page-sub">Grade <strong>{{ grade }}</strong></p>
+</div>
+
+<div class="review-list">
+    {% for item in review %}
+    <div class="review-item {{ 'review-correct' if item.correct else 'review-wrong' }}">
+        <p class="review-q">{{ item.question }}</p>
+        <p class="review-a">Your answer: <strong>{{ item.your_answer }}</strong></p>
+        {% if not item.correct %}
+        <p class="review-correct-a">Correct answer: <strong>{{ item.correct_answer }}</strong></p>
+        {% if item.explanation %}
+        <div class="review-explanation">
+            <span class="review-explanation-tag">AI tutor</span>
+            <span>{{ item.explanation }}</span>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="result-actions">
+    <a href="{{ url_for('quiz_view', course_key=course_key) }}" class="btn btn-ghost">Retry quiz</a>
+    <a href="{{ url_for('ai_tutor_page') }}?course={{ course_key }}" class="btn btn-ghost">Ask the AI tutor about what I missed</a>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-primary">Back to courses</a>
+</div>
+{% endblock %}

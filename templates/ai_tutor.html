@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}AI Tutor — EduNova AI{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="page-eyebrow">AI TUTOR</div>
+    <h1>Ask anything about your courses</h1>
+    <p class="page-sub">Powered by Groq (free tier, Llama models). Pick a subject for more focused answers.</p>
+</div>
+
+{% if not ai_enabled %}
+<div class="ai-disabled-notice">
+    The AI Tutor isn't configured yet. The server owner needs to set the
+    <code>GROQ_API_KEY</code> environment variable to enable it.
+</div>
+{% endif %}
+
+<div class="tutor-layout">
+    <div class="tutor-sidebar">
+        <label for="courseSelect">Subject</label>
+        <select id="courseSelect">
+            <option value="">General</option>
+            {% for key, course in courses.items() %}
+            <option value="{{ key }}">{{ course.title }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="tutor-chat">
+        <div class="chat-window" id="chatWindow">
+            <div class="chat-bubble chat-ai">Hi! Ask me anything about C++, Physics, or ICT — I'll explain it step by step.</div>
+        </div>
+        <form id="chatForm" class="chat-input-row">
+            <input type="text" id="chatInput" placeholder="e.g. Why do we use loops in C++?" autocomplete="off" {% if not ai_enabled %}disabled{% endif %}>
+            <button type="submit" class="btn btn-primary" {% if not ai_enabled %}disabled{% endif %}>Send</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const chatWindow = document.getElementById('chatWindow');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
+const courseSelect = document.getElementById('courseSelect');
+
+const params = new URLSearchParams(window.location.search);
+if (params.get('course')) courseSelect.value = params.get('course');
+
+function addBubble(text, sender) {
+    const div = document.createElement('div');
+    div.className = 'chat-bubble chat-' + sender;
+    div.textContent = text;
+    chatWindow.appendChild(div);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+    return div;
+}
+
+chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const message = chatInput.value.trim();
+    if (!message) return;
+    addBubble(message, 'user');
+    chatInput.value = '';
+    const thinking = addBubble('Thinking…', 'ai');
+
+    try {
+        const res = await fetch('/api/ai-tutor', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message, course_key: courseSelect.value})
+        });
+        const data = await res.json();
+        thinking.textContent = data.reply || data.error || 'Something went wrong.';
+    } catch (err) {
+        thinking.textContent = 'Network error — please try again.';
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Courses — EduNova AI{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="page-eyebrow">YOUR COURSES</div>
+    <h1>Welcome back, {{ session.name }}.</h1>
+    <p class="page-sub">Pick a subject to continue, or start something new.</p>
+</div>
+
+<div class="course-grid">
+    {% for key, course in courses.items() %}
+    {% set p = progress.get(key) %}
+    <a href="{{ url_for('course_view', course_key=key) }}" class="course-card">
+        <div class="course-card-top">
+            <span class="course-icon icon-{{ course.icon }}"></span>
+            <span class="course-status status-{{ (p.learning_status if p else 'Not Started') | replace(' ', '-') | lower }}">
+                {{ p.learning_status if p else 'Not Started' }}
+            </span>
+        </div>
+        <h3>{{ course.title }}</h3>
+        <p>{{ course.topics | length }} topics · 5-question check</p>
+        {% if p and p.attempts > 0 %}
+        <div class="course-score">Last score: <strong>{{ p.score }}/5</strong> — Grade {{ p.grade }}</div>
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+{% endblock %}

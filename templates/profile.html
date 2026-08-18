@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Profile — EduNova AI{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="page-eyebrow">STUDENT PROFILE</div>
+    <h1>{{ user.name }}</h1>
+</div>
+
+<div class="profile-grid">
+    <div class="profile-card">
+        <span class="profile-label">Class</span>
+        <span class="profile-value">{{ user.class_name }}</span>
+    </div>
+    <div class="profile-card">
+        <span class="profile-label">Roll number</span>
+        <span class="profile-value">{{ user.roll }}</span>
+    </div>
+    <div class="profile-card">
+        <span class="profile-label">Member since</span>
+        <span class="profile-value">{{ user.created_at[:10] }}</span>
+    </div>
+</div>
+
+<h2 class="section-title">Progress</h2>
+<div class="progress-table">
+    <div class="progress-row progress-header">
+        <span>Course</span><span>Status</span><span>Score</span><span>Grade</span><span>Attempts</span>
+    </div>
+    {% for key, course in courses.items() %}
+    {% set p = progress | selectattr('course_key', 'equalto', key) | first %}
+    <div class="progress-row">
+        <span>{{ course.title }}</span>
+        <span>{{ p.learning_status if p else 'Not Started' }}</span>
+        <span>{{ (p.score ~ '/5') if p and p.attempts > 0 else '—' }}</span>
+        <span>{{ p.grade if p and p.attempts > 0 else '—' }}</span>
+        <span>{{ p.attempts if p else 0 }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

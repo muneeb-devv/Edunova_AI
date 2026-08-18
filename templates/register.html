@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Register — EduNova AI{% endblock %}
+{% block page_class %}page-auth{% endblock %}
+{% block content %}
+<div class="auth-card">
+    <div class="auth-eyebrow">NEW STUDENT</div>
+    <h2>Create your account</h2>
+    <p class="auth-sub">Takes less than a minute.</p>
+
+    <form method="POST" class="form">
+        <label>Full name
+            <input type="text" name="name" required autofocus>
+        </label>
+        <label>Class
+            <input type="text" name="class_name" placeholder="e.g. 9th, BSCS-2" required>
+        </label>
+        <label>Roll number
+            <input type="text" name="roll" required>
+        </label>
+        <label>Password <span class="hint">min 8 characters</span>
+            <div class="password-field">
+                <input type="password" name="password" required minlength="8">
+                {% include "_password_toggle.html" %}
+            </div>
+        </label>
+        <label>Confirm password
+            <div class="password-field">
+                <input type="password" name="confirm_password" required minlength="8">
+                {% include "_password_toggle.html" %}
+            </div>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Register</button>
+    </form>
+
+    <p class="auth-switch">Already registered? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ course.title }} — Admin{% endblock %}
+{% block content %}
+<div class="admin-topbar">
+    <div>
+        <div class="page-eyebrow">EDITING COURSE</div>
+        <h1 style="font-family:var(--font-display);font-size:30px;margin:0;">{{ course.title }}</h1>
+    </div>
+    <a href="{{ url_for('admin_dashboard') }}">← All courses</a>
+</div>
+
+<div class="admin-panel">
+    <h2>Course details</h2>
+    <form method="POST" action="{{ url_for('admin_update_course', course_key=course.key) }}" class="admin-inline-form">
+        <label>Title
+            <input type="text" name="title" value="{{ course.title }}" required>
+        </label>
+        <label>Icon tag
+            <input type="text" name="icon" value="{{ course.icon }}">
+        </label>
+        <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+</div>
+
+<div class="admin-panel">
+    <h2>Learning topics ({{ topics | length }})</h2>
+    <div class="admin-item-list">
+        {% for topic in topics %}
+        <div class="admin-item">
+            <div class="admin-item-body">{{ topic.text }}</div>
+            <form method="POST" action="{{ url_for('admin_delete_topic', course_key=course.key, topic_id=topic.id) }}">
+                <button type="submit" class="btn-danger-sm">Remove</button>
+            </form>
+        </div>
+        {% else %}
+        <p class="admin-empty">No topics yet.</p>
+        {% endfor %}
+    </div>
+    <form method="POST" action="{{ url_for('admin_add_topic', course_key=course.key) }}" class="admin-inline-form">
+        <label>New topic line
+            <input type="text" name="text" placeholder="e.g. Pointers store the address of a variable." required>
+        </label>
+        <button type="submit" class="btn btn-primary">Add topic</button>
+    </form>
+</div>
+
+<div class="admin-panel">
+    <h2>Quiz questions ({{ questions | length }})</h2>
+    <div class="admin-item-list">
+        {% for q in questions %}
+        <div class="admin-item">
+            <div class="admin-item-body">
+                {{ q.question_text }}
+                <div class="admin-item-meta">
+                    1. {{ q.option1 }}{{ ' ' }}<span class="correct-tag">{{ '✓ correct' if q.correct_answer == 1 }}</span><br>
+                    2. {{ q.option2 }}{{ ' ' }}<span class="correct-tag">{{ '✓ correct' if q.correct_answer == 2 }}</span>
+                </div>
+            </div>
+            <form method="POST" action="{{ url_for('admin_delete_question', course_key=course.key, question_id=q.id) }}">
+                <button type="submit" class="btn-danger-sm">Remove</button>
+            </form>
+        </div>
+        {% else %}
+        <p class="admin-empty">No questions yet.</p>
+        {% endfor %}
+    </div>
+
+    <form method="POST" action="{{ url_for('admin_add_question', course_key=course.key) }}" class="form" style="margin-top:18px;">
+        <label>Question
+            <input type="text" name="question_text" placeholder="e.g. What does a for loop do?" required>
+        </label>
+        <label>Option 1
+            <input type="text" name="option1" required>
+        </label>
+        <label>Option 2
+            <input type="text" name="option2" required>
+        </label>
+        <label>Correct option
+            <select name="correct_answer">
+                <option value="1">Option 1</option>
+                <option value="2">Option 2</option>
+            </select>
+        </label>
+        <button type="submit" class="btn btn-primary">Add question</button>
+    </form>
+</div>
+{% endblock %}

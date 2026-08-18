@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ course.title }} — EduNova AI{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="page-eyebrow">LEARNING SECTION</div>
+    <h1>{{ course.title }}</h1>
+    <p class="page-sub">Read through every note below, then unlock the quiz.</p>
+</div>
+
+<ol class="topic-list">
+    {% for topic in course.topics %}
+    <li><span class="topic-index">{{ '%02d' % loop.index }}</span>{{ topic }}</li>
+    {% endfor %}
+</ol>
+
+<form method="POST" action="{{ url_for('complete_learning', course_key=course_key) }}" class="complete-form">
+    <label class="confirm-check">
+        <input type="checkbox" id="confirmRead" required>
+        I've read through all the notes above.
+    </label>
+    <button type="submit" class="btn btn-primary">Unlock quiz →</button>
+</form>
+{% endblock %}

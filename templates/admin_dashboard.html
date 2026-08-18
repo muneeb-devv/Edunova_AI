@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Admin — EduNova AI{% endblock %}
+{% block content %}
+<div class="admin-topbar">
+    <div>
+        <div class="page-eyebrow">TEACHER / ADMIN</div>
+        <h1 style="font-family:var(--font-display);font-size:30px;margin:0;">Course manager</h1>
+    </div>
+    <a href="{{ url_for('admin_logout') }}">Log out of admin →</a>
+</div>
+
+<div class="admin-stats">
+    <div class="admin-stat">
+        <span class="admin-stat-value">{{ courses | length }}</span>
+        <span class="admin-stat-label">Courses</span>
+    </div>
+    <div class="admin-stat">
+        <span class="admin-stat-value">{{ student_count }}</span>
+        <span class="admin-stat-label">Registered students</span>
+    </div>
+</div>
+
+<div class="admin-course-list">
+    {% for course in courses %}
+    <div class="admin-course-row">
+        <div>
+            <h3>{{ course.title }}</h3>
+            <p>{{ course.topic_count }} topics · {{ course.question_count }} quiz questions · key: <code>{{ course.key }}</code></p>
+        </div>
+        <div class="admin-course-actions">
+            <a href="{{ url_for('admin_course_edit', course_key=course.key) }}" class="btn btn-ghost">Edit</a>
+            <form method="POST" action="{{ url_for('admin_delete_course', course_key=course.key) }}"
+                  onsubmit="return confirm('Delete {{ course.title }} and all its topics, questions, and student progress? This cannot be undone.');">
+                <button type="submit" class="btn-danger-sm">Delete</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <p class="admin-empty">No courses yet — add your first one below.</p>
+    {% endfor %}
+</div>
+
+<div class="admin-panel">
+    <h2>Add a new course</h2>
+    <form method="POST" action="{{ url_for('admin_add_course') }}" class="admin-inline-form">
+        <label>Course title
+            <input type="text" name="title" placeholder="e.g. Chemistry" required>
+        </label>
+        <label>Icon tag <span class="hint">optional</span>
+            <input type="text" name="icon" placeholder="code / atom / monitor / book">
+        </label>
+        <button type="submit" class="btn btn-primary">Add course</button>
+    </form>
+</div>
+{% endblock %}
