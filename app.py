@@ -1,6 +1,7 @@
 import os
 import re
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import json
 from functools import wraps
 from datetime import datetime
@@ -31,11 +32,8 @@ app = Flask(__name__)
 
 app.secret_key = os.getenv('SECRET_KEY', 'default_secret_key')
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "elearning.db")
-
 # ---------------- RATE LIMITING ----------------
 def _rate_limit_key():
-    # Limit per logged-in student where possible, otherwise per IP.
     return f"user:{session['user_id']}" if "user_id" in session else get_remote_address()
 
 
@@ -46,7 +44,6 @@ else:
 
 
 def ai_rate_limit(rule):
-    """No-op decorator if flask-limiter isn't installed, so the app never crashes."""
     def decorator(f):
         if limiter is None:
             return f
@@ -54,7 +51,7 @@ def ai_rate_limit(rule):
     return decorator
 
 
-# ---------------- SEED COURSE DATA (used once, to populate the DB on first run) ----------------
+# ---------------- SEED COURSE DATA ----------------
 SEED_COURSES = [
     {
         "key": "cpp", "title": "C++ Programming", "icon": "code",
@@ -127,17 +124,20 @@ SEED_COURSES = [
 
 # ---------------- DATABASE ----------------
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = psycopg2.connect(
+        os.environ.get("DATABASE_URL"),
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
     return conn
 
 
 def init_db():
     conn = get_db()
-    conn.execute("""
+    cur = conn.cursor()
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             class_name TEXT NOT NULL,
             roll TEXT NOT NULL UNIQUE,
@@ -145,66 +145,70 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
-    conn.execute("""
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS progress (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
             course_key TEXT NOT NULL,
             learning_status TEXT DEFAULT 'Not Started',
             score INTEGER DEFAULT 0,
             grade TEXT DEFAULT '-',
             attempts INTEGER DEFAULT 0,
             updated_at TEXT,
-            UNIQUE(user_id, course_key),
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            UNIQUE(user_id, course_key)
         )
     """)
-    conn.execute("""
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             key TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             icon TEXT DEFAULT 'book'
         )
     """)
-    conn.execute("""
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS topics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            course_key TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            course_key TEXT NOT NULL REFERENCES courses(key) ON DELETE CASCADE,
             position INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            FOREIGN KEY(course_key) REFERENCES courses(key) ON DELETE CASCADE
+            text TEXT NOT NULL
         )
     """)
-    conn.execute("""
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS questions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            course_key TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            course_key TEXT NOT NULL REFERENCES courses(key) ON DELETE CASCADE,
             position INTEGER NOT NULL,
             question_text TEXT NOT NULL,
             option1 TEXT NOT NULL,
             option2 TEXT NOT NULL,
-            correct_answer INTEGER NOT NULL,
-            FOREIGN KEY(course_key) REFERENCES courses(key) ON DELETE CASCADE
+            correct_answer INTEGER NOT NULL
         )
     """)
+
     conn.commit()
 
-    # Seed course data only the very first time (if courses table is empty).
-    existing = conn.execute("SELECT COUNT(*) AS c FROM courses").fetchone()["c"]
+    cur.execute("SELECT COUNT(*) AS c FROM courses")
+    existing = cur.fetchone()["c"]
+
     if existing == 0:
         for c in SEED_COURSES:
-            conn.execute("INSERT INTO courses (key, title, icon) VALUES (?, ?, ?)",
+            cur.execute("INSERT INTO courses (key, title, icon) VALUES (%s, %s, %s)",
                         (c["key"], c["title"], c["icon"]))
             for i, topic in enumerate(c["topics"]):
-                conn.execute("INSERT INTO topics (course_key, position, text) VALUES (?, ?, ?)",
+                cur.execute("INSERT INTO topics (course_key, position, text) VALUES (%s, %s, %s)",
                             (c["key"], i, topic))
             for i, q in enumerate(c["questions"]):
-                conn.execute("""
+                cur.execute("""
                     INSERT INTO questions (course_key, position, question_text, option1, option2, correct_answer)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                 """, (c["key"], i, q["q"], q["options"][0], q["options"][1], q["answer"]))
         conn.commit()
 
+    cur.close()
     conn.close()
 
 
@@ -214,16 +218,16 @@ def slugify(text):
 
 
 def get_courses_dict():
-    """Rebuilds the COURSES-shaped dict from the database, so the rest of the app
-    (dashboard, quiz, AI tutor) doesn't need to know courses now live in the DB."""
     conn = get_db()
-    courses_rows = conn.execute("SELECT * FROM courses ORDER BY rowid").fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM courses ORDER BY key")
+    courses_rows = cur.fetchall()
     result = {}
     for c in courses_rows:
-        topics = conn.execute("SELECT text FROM topics WHERE course_key = ? ORDER BY position",
-                              (c["key"],)).fetchall()
-        questions = conn.execute("SELECT * FROM questions WHERE course_key = ? ORDER BY position",
-                                 (c["key"],)).fetchall()
+        cur.execute("SELECT text FROM topics WHERE course_key = %s ORDER BY position", (c["key"],))
+        topics = cur.fetchall()
+        cur.execute("SELECT * FROM questions WHERE course_key = %s ORDER BY position", (c["key"],))
+        questions = cur.fetchall()
         result[c["key"]] = {
             "title": c["title"],
             "icon": c["icon"],
@@ -233,6 +237,7 @@ def get_courses_dict():
                 for q in questions
             ],
         }
+    cur.close()
     conn.close()
     return result
 
@@ -267,7 +272,6 @@ def admin_required(f):
 
 # ---------------- AI HELPER ----------------
 def call_openrouter(messages, max_tokens=600, force_json=False):
-    """Shared helper for talking to OpenRouter's chat completions endpoint."""
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         return None, "AI is not configured. Set the OPENROUTER_API_KEY environment variable."
@@ -289,12 +293,7 @@ def call_openrouter(messages, max_tokens=600, force_json=False):
     }
 
     try:
-        resp = requests.post(
-            OPENROUTER_URL,
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
+        resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
         result = resp.json()
         if resp.status_code != 200:
             return None, result.get("error", {}).get("message", "Unknown error from OpenRouter API.")
@@ -308,7 +307,6 @@ def call_openrouter(messages, max_tokens=600, force_json=False):
 
 
 def get_wrong_answer_explanations(course_title, wrong_items):
-    """Calls OpenRouter once for ALL wrong answers in a quiz attempt."""
     if not wrong_items:
         return []
     if not os.environ.get("OPENROUTER_API_KEY"):
@@ -346,7 +344,6 @@ def get_wrong_answer_explanations(course_title, wrong_items):
 
 
 def generate_ai_quiz(course_title, topics, n=5):
-    """Asks OpenRouter to write n fresh two-option MCQs based on the course's topic notes."""
     if not os.environ.get("OPENROUTER_API_KEY") or not topics:
         return None
 
@@ -384,6 +381,7 @@ def generate_ai_quiz(course_title, topics, n=5):
     except (json.JSONDecodeError, AttributeError, TypeError):
         return None
 
+
 # ---------------- AUTH ROUTES ----------------
 @app.route("/")
 def index():
@@ -412,17 +410,21 @@ def register():
             return render_template("register.html")
 
         conn = get_db()
-        existing = conn.execute("SELECT id FROM users WHERE roll = ?", (roll,)).fetchone()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE roll = %s", (roll,))
+        existing = cur.fetchone()
         if existing:
             flash("A student with this roll number already exists.", "error")
+            cur.close()
             conn.close()
             return render_template("register.html")
 
-        conn.execute(
-            "INSERT INTO users (name, class_name, roll, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+        cur.execute(
+            "INSERT INTO users (name, class_name, roll, password_hash, created_at) VALUES (%s, %s, %s, %s, %s)",
             (name, class_name, roll, generate_password_hash(password), datetime.now().isoformat()),
         )
         conn.commit()
+        cur.close()
         conn.close()
         flash("Registration successful! Please log in.", "success")
         return redirect(url_for("login"))
@@ -437,7 +439,10 @@ def login():
         password = request.form.get("password", "")
 
         conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE roll = ?", (roll,)).fetchone()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE roll = %s", (roll,))
+        user = cur.fetchone()
+        cur.close()
         conn.close()
 
         if user and check_password_hash(user["password_hash"], password):
@@ -458,24 +463,30 @@ def forgot_password():
         confirm = request.form.get("confirm_password", "")
 
         conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE roll = ? AND name = ?", (roll, name)).fetchone()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE roll = %s AND name = %s", (roll, name))
+        user = cur.fetchone()
 
         if not user:
             flash("No matching student found.", "error")
+            cur.close()
             conn.close()
             return render_template("forgot_password.html")
         if len(new_password) < 8:
             flash("Password must be at least 8 characters.", "error")
+            cur.close()
             conn.close()
             return render_template("forgot_password.html")
         if new_password != confirm:
             flash("Passwords do not match.", "error")
+            cur.close()
             conn.close()
             return render_template("forgot_password.html")
 
-        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
                      (generate_password_hash(new_password), user["id"]))
         conn.commit()
+        cur.close()
         conn.close()
         flash("Password reset successful! Please log in.", "success")
         return redirect(url_for("login"))
@@ -495,7 +506,10 @@ def logout():
 def dashboard():
     courses = get_courses_dict()
     conn = get_db()
-    rows = conn.execute("SELECT * FROM progress WHERE user_id = ?", (session["user_id"],)).fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM progress WHERE user_id = %s", (session["user_id"],))
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     progress_map = {r["course_key"]: r for r in rows}
     return render_template("dashboard.html", courses=courses, progress=progress_map)
@@ -506,8 +520,12 @@ def dashboard():
 def profile():
     courses = get_courses_dict()
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
-    rows = conn.execute("SELECT * FROM progress WHERE user_id = ?", (session["user_id"],)).fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id = %s", (session["user_id"],))
+    user = cur.fetchone()
+    cur.execute("SELECT * FROM progress WHERE user_id = %s", (session["user_id"],))
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return render_template("profile.html", user=user, progress=rows, courses=courses)
 
@@ -529,13 +547,15 @@ def complete_learning(course_key):
     if course_key not in courses:
         return redirect(url_for("dashboard"))
     conn = get_db()
-    conn.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         INSERT INTO progress (user_id, course_key, learning_status, updated_at)
-        VALUES (?, ?, 'Completed', ?)
+        VALUES (%s, %s, 'Completed', %s)
         ON CONFLICT(user_id, course_key)
-        DO UPDATE SET learning_status = 'Completed', updated_at = excluded.updated_at
+        DO UPDATE SET learning_status = 'Completed', updated_at = EXCLUDED.updated_at
     """, (session["user_id"], course_key, datetime.now().isoformat()))
     conn.commit()
+    cur.close()
     conn.close()
     return redirect(url_for("quiz_view", course_key=course_key))
 
@@ -548,8 +568,11 @@ def quiz_view(course_key):
     if course_key not in courses:
         return redirect(url_for("dashboard"))
     conn = get_db()
-    row = conn.execute("SELECT * FROM progress WHERE user_id = ? AND course_key = ?",
-                       (session["user_id"], course_key)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM progress WHERE user_id = %s AND course_key = %s",
+                (session["user_id"], course_key))
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     if not row or row["learning_status"] != "Completed":
         flash("Please complete the learning section first.", "error")
@@ -560,8 +583,6 @@ def quiz_view(course_key):
     is_ai_generated = ai_questions is not None
     quiz_questions = ai_questions if is_ai_generated else course["questions"]
 
-    # Stash the exact questions shown so grading checks against these, not whatever
-    # the DB/AI happens to hold a moment later.
     session.setdefault("active_quizzes", {})
     session["active_quizzes"][course_key] = quiz_questions
     session.modified = True
@@ -577,8 +598,6 @@ def submit_quiz(course_key):
     if course_key not in courses:
         return redirect(url_for("dashboard"))
 
-    # Grade against the exact question set the student was shown (AI-generated or not) —
-    # falls back to the current DB questions if the session expired for some reason.
     active = session.get("active_quizzes", {})
     questions = active.get(course_key) or courses[course_key]["questions"]
 
@@ -605,15 +624,16 @@ def submit_quiz(course_key):
     grade = calculate_grade(score)
 
     conn = get_db()
-    conn.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         UPDATE progress
-        SET score = ?, grade = ?, attempts = attempts + 1, updated_at = ?
-        WHERE user_id = ? AND course_key = ?
+        SET score = %s, grade = %s, attempts = attempts + 1, updated_at = %s
+        WHERE user_id = %s AND course_key = %s
     """, (score, grade, datetime.now().isoformat(), session["user_id"], course_key))
     conn.commit()
+    cur.close()
     conn.close()
 
-    # AI-generated explanations for wrong answers only (never blocks the result page on failure).
     wrong_items = [item for item in review if not item["correct"]]
     explanations = get_wrong_answer_explanations(courses[course_key]["title"], wrong_items)
     if explanations is not None:
@@ -640,7 +660,7 @@ def ai_tutor_page():
 @ai_rate_limit("15 per hour")
 def api_ai_tutor():
     if not os.environ.get("OPENROUTER_API_KEY"):
-        return jsonify({"error": "AI Tutor is not configured. Set the OPENROUTER_API_KEY environment variable on the server."}), 503
+        return jsonify({"error": "AI Tutor is not configured."}), 503
 
     data = request.get_json(force=True)
     message = (data.get("message") or "").strip()
@@ -649,7 +669,7 @@ def api_ai_tutor():
     if not message:
         return jsonify({"error": "Message is empty."}), 400
     if len(message) > 1500:
-        return jsonify({"error": "That message is too long. Try asking something shorter."}), 400
+        return jsonify({"error": "That message is too long."}), 400
 
     courses = get_courses_dict()
     course_title = courses.get(course_key, {}).get("title", "general studies")
@@ -669,15 +689,15 @@ def api_ai_tutor():
     )
     if err:
         return jsonify({"error": f"AI request failed: {err}"}), 502
-    return jsonify({"reply": answer_text or "Sorry, I couldn't generate a response to that. Try asking differently."})
+    return jsonify({"reply": answer_text or "Sorry, I couldn't generate a response."})
 
 
 if Limiter is not None:
     @app.errorhandler(429)
     def rate_limit_exceeded(e):
         if request.path.startswith("/api/"):
-            return jsonify({"error": "You've asked a lot of questions! Please wait a bit before asking another."}), 429
-        flash("You've hit the AI Tutor's usage limit for now — please try again shortly.", "error")
+            return jsonify({"error": "You've asked a lot of questions! Please wait."}), 429
+        flash("You've hit the AI Tutor's usage limit for now.", "error")
         return redirect(url_for("ai_tutor_page"))
 
 
@@ -703,13 +723,17 @@ def admin_logout():
 @admin_required
 def admin_dashboard():
     conn = get_db()
-    courses = conn.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         SELECT c.*,
             (SELECT COUNT(*) FROM topics t WHERE t.course_key = c.key) AS topic_count,
             (SELECT COUNT(*) FROM questions q WHERE q.course_key = c.key) AS question_count
-        FROM courses c ORDER BY c.rowid
-    """).fetchall()
-    student_count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        FROM courses c ORDER BY c.key
+    """)
+    courses = cur.fetchall()
+    cur.execute("SELECT COUNT(*) AS c FROM users")
+    student_count = cur.fetchone()["c"]
+    cur.close()
     conn.close()
     return render_template("admin_dashboard.html", courses=courses, student_count=student_count)
 
@@ -724,15 +748,20 @@ def admin_add_course():
         return redirect(url_for("admin_dashboard"))
 
     conn = get_db()
+    cur = conn.cursor()
     base_key = slugify(title)
     key = base_key
     suffix = 2
-    while conn.execute("SELECT 1 FROM courses WHERE key = ?", (key,)).fetchone():
+    while True:
+        cur.execute("SELECT 1 FROM courses WHERE key = %s", (key,))
+        if not cur.fetchone():
+            break
         key = f"{base_key}-{suffix}"
         suffix += 1
 
-    conn.execute("INSERT INTO courses (key, title, icon) VALUES (?, ?, ?)", (key, title, icon))
+    cur.execute("INSERT INTO courses (key, title, icon) VALUES (%s, %s, %s)", (key, title, icon))
     conn.commit()
+    cur.close()
     conn.close()
     flash(f'Course "{title}" created.', "success")
     return redirect(url_for("admin_course_edit", course_key=key))
@@ -742,13 +771,19 @@ def admin_add_course():
 @admin_required
 def admin_course_edit(course_key):
     conn = get_db()
-    course = conn.execute("SELECT * FROM courses WHERE key = ?", (course_key,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM courses WHERE key = %s", (course_key,))
+    course = cur.fetchone()
     if not course:
+        cur.close()
         conn.close()
         flash("Course not found.", "error")
         return redirect(url_for("admin_dashboard"))
-    topics = conn.execute("SELECT * FROM topics WHERE course_key = ? ORDER BY position", (course_key,)).fetchall()
-    questions = conn.execute("SELECT * FROM questions WHERE course_key = ? ORDER BY position", (course_key,)).fetchall()
+    cur.execute("SELECT * FROM topics WHERE course_key = %s ORDER BY position", (course_key,))
+    topics = cur.fetchall()
+    cur.execute("SELECT * FROM questions WHERE course_key = %s ORDER BY position", (course_key,))
+    questions = cur.fetchall()
+    cur.close()
     conn.close()
     return render_template("admin_course.html", course=course, topics=topics, questions=questions)
 
@@ -760,8 +795,10 @@ def admin_update_course(course_key):
     icon = request.form.get("icon", "").strip() or "book"
     if title:
         conn = get_db()
-        conn.execute("UPDATE courses SET title = ?, icon = ? WHERE key = ?", (title, icon, course_key))
+        cur = conn.cursor()
+        cur.execute("UPDATE courses SET title = %s, icon = %s WHERE key = %s", (title, icon, course_key))
         conn.commit()
+        cur.close()
         conn.close()
         flash("Course details updated.", "success")
     return redirect(url_for("admin_course_edit", course_key=course_key))
@@ -771,11 +808,13 @@ def admin_update_course(course_key):
 @admin_required
 def admin_delete_course(course_key):
     conn = get_db()
-    conn.execute("DELETE FROM courses WHERE key = ?", (course_key,))
-    conn.execute("DELETE FROM topics WHERE course_key = ?", (course_key,))
-    conn.execute("DELETE FROM questions WHERE course_key = ?", (course_key,))
-    conn.execute("DELETE FROM progress WHERE course_key = ?", (course_key,))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM courses WHERE key = %s", (course_key,))
+    cur.execute("DELETE FROM topics WHERE course_key = %s", (course_key,))
+    cur.execute("DELETE FROM questions WHERE course_key = %s", (course_key,))
+    cur.execute("DELETE FROM progress WHERE course_key = %s", (course_key,))
     conn.commit()
+    cur.close()
     conn.close()
     flash("Course deleted.", "success")
     return redirect(url_for("admin_dashboard"))
@@ -787,11 +826,13 @@ def admin_add_topic(course_key):
     text = request.form.get("text", "").strip()
     if text:
         conn = get_db()
-        next_pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM topics WHERE course_key = ?",
-                                (course_key,)).fetchone()["p"]
-        conn.execute("INSERT INTO topics (course_key, position, text) VALUES (?, ?, ?)",
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM topics WHERE course_key = %s", (course_key,))
+        next_pos = cur.fetchone()["p"]
+        cur.execute("INSERT INTO topics (course_key, position, text) VALUES (%s, %s, %s)",
                     (course_key, next_pos, text))
         conn.commit()
+        cur.close()
         conn.close()
     return redirect(url_for("admin_course_edit", course_key=course_key))
 
@@ -800,8 +841,10 @@ def admin_add_topic(course_key):
 @admin_required
 def admin_delete_topic(course_key, topic_id):
     conn = get_db()
-    conn.execute("DELETE FROM topics WHERE id = ? AND course_key = ?", (topic_id, course_key))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM topics WHERE id = %s AND course_key = %s", (topic_id, course_key))
     conn.commit()
+    cur.close()
     conn.close()
     return redirect(url_for("admin_course_edit", course_key=course_key))
 
@@ -816,13 +859,15 @@ def admin_add_question(course_key):
 
     if question_text and option1 and option2:
         conn = get_db()
-        next_pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM questions WHERE course_key = ?",
-                                (course_key,)).fetchone()["p"]
-        conn.execute("""
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM questions WHERE course_key = %s", (course_key,))
+        next_pos = cur.fetchone()["p"]
+        cur.execute("""
             INSERT INTO questions (course_key, position, question_text, option1, option2, correct_answer)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (course_key, next_pos, question_text, option1, option2, int(correct_answer)))
         conn.commit()
+        cur.close()
         conn.close()
     return redirect(url_for("admin_course_edit", course_key=course_key))
 
@@ -831,13 +876,15 @@ def admin_add_question(course_key):
 @admin_required
 def admin_delete_question(course_key, question_id):
     conn = get_db()
-    conn.execute("DELETE FROM questions WHERE id = ? AND course_key = ?", (question_id, course_key))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM questions WHERE id = %s AND course_key = %s", (question_id, course_key))
     conn.commit()
+    cur.close()
     conn.close()
     return redirect(url_for("admin_course_edit", course_key=course_key))
 
 
-init_db()  # runs on import too, so gunicorn/production servers create tables correctly
+init_db()
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
