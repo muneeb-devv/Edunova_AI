@@ -1,5 +1,6 @@
 import os
 import re
+import secrets
 import psycopg2
 import psycopg2.extras
 import json
@@ -18,6 +19,11 @@ try:
 except ImportError:
     Limiter = None
 
+try:
+    from flask_wtf import CSRFProtect
+except ImportError:
+    CSRFProtect = None
+
 
 # OpenRouter API Setup
 # Get a free key at https://openrouter.ai/keys
@@ -25,12 +31,37 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Admin panel password — change this via environment variable before deploying.
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+# ---------------- ADMIN PASSWORD ----------------
+# NO hardcoded default. If this is not set in the environment, the admin
+# panel stays disabled (see admin_login) instead of silently falling back
+# to a guessable password like "admin123".
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    print("WARNING: ADMIN_PASSWORD is not set. The admin panel will refuse all "
+          "logins until you set this environment variable.")
 
 app = Flask(__name__)
 
-app.secret_key = os.getenv('SECRET_KEY', 'default_secret_key')
+# ---------------- SECRET KEY ----------------
+# NO hardcoded default either. If SECRET_KEY isn't set we generate a random
+# one for this process only. That means sessions won't survive a restart,
+# but it's far safer than shipping a fixed, publicly-known key that anyone
+# reading the source could use to forge session cookies (e.g. is_admin=True).
+_secret = os.getenv("SECRET_KEY")
+if not _secret:
+    _secret = secrets.token_hex(32)
+    print("WARNING: SECRET_KEY is not set. Using a random per-run key — "
+          "all logged-in sessions will be invalidated on restart. "
+          "Set SECRET_KEY in your environment for production.")
+app.secret_key = _secret
+
+# ---------------- CSRF PROTECTION ----------------
+if CSRFProtect is not None:
+    csrf = CSRFProtect(app)
+else:
+    csrf = None
+    print("WARNING: flask-wtf is not installed, so CSRF protection is OFF. "
+          "Run: pip install flask-wtf")
 
 # ---------------- RATE LIMITING ----------------
 def _rate_limit_key():
@@ -38,7 +69,11 @@ def _rate_limit_key():
 
 
 if Limiter is not None:
-    limiter = Limiter(key_func=_rate_limit_key, app=app, default_limits=[], storage_uri="memory://")
+    # If you deploy with more than one worker/process (or Redis is available),
+    # set REDIS_URL so rate limits are shared across processes. "memory://"
+    # only limits a single process and is easy to bypass otherwise.
+    _limiter_storage = os.environ.get("REDIS_URL", "memory://")
+    limiter = Limiter(key_func=_rate_limit_key, app=app, default_limits=[], storage_uri=_limiter_storage)
 else:
     limiter = None
 
@@ -49,6 +84,16 @@ def ai_rate_limit(rule):
             return f
         return limiter.limit(rule)(f)
     return decorator
+
+
+# ---------------- SECURITY QUESTIONS (for password reset) ----------------
+SECURITY_QUESTIONS = [
+    "What was your first school's name?",
+    "What is your mother's first name?",
+    "What is your favorite subject?",
+    "What city were you born in?",
+    "What was the name of your first pet?",
+]
 
 
 # ---------------- SEED COURSE DATA ----------------
@@ -146,6 +191,12 @@ def init_db():
         )
     """)
 
+    # Security question fields, added for the password-reset fix.
+    # ADD COLUMN IF NOT EXISTS keeps this safe to run on a database that
+    # already has a users table from before this change.
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_question TEXT")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_hash TEXT")
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS progress (
             id SERIAL PRIMARY KEY,
@@ -186,6 +237,22 @@ def init_db():
             option1 TEXT NOT NULL,
             option2 TEXT NOT NULL,
             correct_answer INTEGER NOT NULL
+        )
+    """)
+
+    # Server-side storage for an in-progress quiz attempt. This used to be
+    # stored in the Flask session cookie, which is only *signed*, not
+    # encrypted — meaning a student could decode their own cookie and read
+    # the correct answers before submitting. Keeping it in the database
+    # instead means the answers never leave the server until the quiz is
+    # graded.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS active_quizzes (
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            course_key TEXT NOT NULL,
+            quiz_data TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, course_key)
         )
     """)
 
@@ -242,12 +309,17 @@ def get_courses_dict():
     return result
 
 
-def calculate_grade(score):
-    if score == 5:
+def calculate_grade(score, total):
+    """Percentage-based grading so it stays correct no matter how many
+    questions a course ends up with (admins can add/remove questions)."""
+    if not total:
+        return "-"
+    pct = (score / total) * 100
+    if pct >= 90:
         return "A"
-    elif score >= 3:
+    elif pct >= 70:
         return "B"
-    elif score >= 1:
+    elif pct >= 40:
         return "C"
     return "F"
 
@@ -398,16 +470,26 @@ def register():
         roll = request.form.get("roll", "").strip()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
+        security_question = request.form.get("security_question", "").strip()
+        security_answer = request.form.get("security_answer", "").strip()
 
-        if not all([name, class_name, roll, password, confirm]):
-            flash("Please fill in all fields.", "error")
-            return render_template("register.html")
+        form_data = {"questions": SECURITY_QUESTIONS}
+
+        if not all([name, class_name, roll, password, confirm, security_question, security_answer]):
+            flash("Please fill in all fields, including the security question.", "error")
+            return render_template("register.html", **form_data)
+        if security_question not in SECURITY_QUESTIONS:
+            flash("Please choose a valid security question.", "error")
+            return render_template("register.html", **form_data)
+        if len(security_answer) < 2:
+            flash("Security answer is too short.", "error")
+            return render_template("register.html", **form_data)
         if len(password) < 8:
             flash("Password must be at least 8 characters.", "error")
-            return render_template("register.html")
+            return render_template("register.html", **form_data)
         if password != confirm:
             flash("Passwords do not match.", "error")
-            return render_template("register.html")
+            return render_template("register.html", **form_data)
 
         conn = get_db()
         cur = conn.cursor()
@@ -417,11 +499,18 @@ def register():
             flash("A student with this roll number already exists.", "error")
             cur.close()
             conn.close()
-            return render_template("register.html")
+            return render_template("register.html", **form_data)
+
+        # Normalize the answer (case/whitespace-insensitive) before hashing,
+        # same as we do when checking it during reset.
+        answer_hash = generate_password_hash(security_answer.lower())
 
         cur.execute(
-            "INSERT INTO users (name, class_name, roll, password_hash, created_at) VALUES (%s, %s, %s, %s, %s)",
-            (name, class_name, roll, generate_password_hash(password), datetime.now().isoformat()),
+            """INSERT INTO users
+               (name, class_name, roll, password_hash, created_at, security_question, security_answer_hash)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (name, class_name, roll, generate_password_hash(password), datetime.now().isoformat(),
+             security_question, answer_hash),
         )
         conn.commit()
         cur.close()
@@ -429,7 +518,7 @@ def register():
         flash("Registration successful! Please log in.", "success")
         return redirect(url_for("login"))
 
-    return render_template("register.html")
+    return render_template("register.html", questions=SECURITY_QUESTIONS)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -455,33 +544,55 @@ def login():
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
+@ai_rate_limit("10 per hour")
 def forgot_password():
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
         roll = request.form.get("roll", "").strip()
-        new_password = request.form.get("new_password", "")
-        confirm = request.form.get("confirm_password", "")
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE roll = %s AND name = %s", (roll, name))
+        cur.execute("SELECT * FROM users WHERE roll = %s", (roll,))
         user = cur.fetchone()
 
-        if not user:
-            flash("No matching student found.", "error")
+        # Step 1: roll number was submitted but no security question chosen
+        # yet -> look the student up and show their security question.
+        if "security_answer" not in request.form:
             cur.close()
             conn.close()
+            if not user or not user["security_question"]:
+                # Same generic message whether the roll doesn't exist or the
+                # account predates security questions, so we don't leak
+                # which rolls are registered.
+                flash("If that roll number has a security question set up, you'll be asked for it next. "
+                      "If nothing happens, contact your admin to reset your password.", "error")
+                return render_template("forgot_password.html")
+            return render_template("forgot_password.html", roll=roll,
+                                   security_question=user["security_question"])
+
+        # Step 2: answer + new password submitted.
+        security_answer = request.form.get("security_answer", "").strip()
+        new_password = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if not user or not user["security_answer_hash"] or \
+                not check_password_hash(user["security_answer_hash"], security_answer.lower()):
+            cur.close()
+            conn.close()
+            flash("That answer doesn't match our records.", "error")
             return render_template("forgot_password.html")
+
         if len(new_password) < 8:
+            cur.close()
+            conn.close()
             flash("Password must be at least 8 characters.", "error")
-            cur.close()
-            conn.close()
-            return render_template("forgot_password.html")
+            return render_template("forgot_password.html", roll=roll,
+                                   security_question=user["security_question"])
         if new_password != confirm:
-            flash("Passwords do not match.", "error")
             cur.close()
             conn.close()
-            return render_template("forgot_password.html")
+            flash("Passwords do not match.", "error")
+            return render_template("forgot_password.html", roll=roll,
+                                   security_question=user["security_question"])
 
         cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
                      (generate_password_hash(new_password), user["id"]))
@@ -507,6 +618,8 @@ def dashboard():
     courses = get_courses_dict()
     conn = get_db()
     cur = conn.cursor()
+    # Scoped to session["user_id"] only — a student can only ever see their
+    # own progress rows, never anyone else's.
     cur.execute("SELECT * FROM progress WHERE user_id = %s", (session["user_id"],))
     rows = cur.fetchall()
     cur.close()
@@ -572,9 +685,9 @@ def quiz_view(course_key):
     cur.execute("SELECT * FROM progress WHERE user_id = %s AND course_key = %s",
                 (session["user_id"], course_key))
     row = cur.fetchone()
-    cur.close()
-    conn.close()
     if not row or row["learning_status"] != "Completed":
+        cur.close()
+        conn.close()
         flash("Please complete the learning section first.", "error")
         return redirect(url_for("course_view", course_key=course_key))
 
@@ -583,9 +696,18 @@ def quiz_view(course_key):
     is_ai_generated = ai_questions is not None
     quiz_questions = ai_questions if is_ai_generated else course["questions"]
 
-    session.setdefault("active_quizzes", {})
-    session["active_quizzes"][course_key] = quiz_questions
-    session.modified = True
+    # Stored server-side (Postgres), not in the session cookie, so the
+    # correct answers are never sent to the student's browser before they
+    # submit the quiz.
+    cur.execute("""
+        INSERT INTO active_quizzes (user_id, course_key, quiz_data, created_at)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (user_id, course_key)
+        DO UPDATE SET quiz_data = EXCLUDED.quiz_data, created_at = EXCLUDED.created_at
+    """, (session["user_id"], course_key, json.dumps(quiz_questions), datetime.now().isoformat()))
+    conn.commit()
+    cur.close()
+    conn.close()
 
     return render_template("quiz.html", course=course, course_key=course_key,
                           quiz_questions=quiz_questions, is_ai_generated=is_ai_generated)
@@ -598,8 +720,12 @@ def submit_quiz(course_key):
     if course_key not in courses:
         return redirect(url_for("dashboard"))
 
-    active = session.get("active_quizzes", {})
-    questions = active.get(course_key) or courses[course_key]["questions"]
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT quiz_data FROM active_quizzes WHERE user_id = %s AND course_key = %s",
+                (session["user_id"], course_key))
+    active_row = cur.fetchone()
+    questions = json.loads(active_row["quiz_data"]) if active_row else courses[course_key]["questions"]
 
     score = 0
     review = []
@@ -616,15 +742,11 @@ def submit_quiz(course_key):
             "correct": correct,
         })
 
-    if course_key in active:
-        del active[course_key]
-        session["active_quizzes"] = active
-        session.modified = True
+    cur.execute("DELETE FROM active_quizzes WHERE user_id = %s AND course_key = %s",
+                (session["user_id"], course_key))
 
-    grade = calculate_grade(score)
+    grade = calculate_grade(score, len(questions))
 
-    conn = get_db()
-    cur = conn.cursor()
     cur.execute("""
         UPDATE progress
         SET score = %s, grade = %s, attempts = attempts + 1, updated_at = %s
@@ -673,6 +795,7 @@ def api_ai_tutor():
 
     courses = get_courses_dict()
     course_title = courses.get(course_key, {}).get("title", "general studies")
+
     system_prompt = (
         f"You are a friendly, patient AI tutor helping a student learn {course_title}. "
         "Explain concepts simply with short examples, use bullet points where helpful, "
@@ -703,8 +826,12 @@ if Limiter is not None:
 
 # ---------------- ADMIN PANEL ----------------
 @app.route("/admin/login", methods=["GET", "POST"])
+@ai_rate_limit("10 per hour")
 def admin_login():
     if request.method == "POST":
+        if not ADMIN_PASSWORD:
+            flash("Admin panel is not configured. Ask the site owner to set ADMIN_PASSWORD.", "error")
+            return render_template("admin_login.html")
         password = request.form.get("password", "")
         if password == ADMIN_PASSWORD:
             session["is_admin"] = True
@@ -855,7 +982,13 @@ def admin_add_question(course_key):
     question_text = request.form.get("question_text", "").strip()
     option1 = request.form.get("option1", "").strip()
     option2 = request.form.get("option2", "").strip()
-    correct_answer = request.form.get("correct_answer", "1")
+    correct_answer_raw = request.form.get("correct_answer", "1")
+    try:
+        correct_answer = int(correct_answer_raw)
+    except ValueError:
+        correct_answer = 1
+    if correct_answer not in (1, 2):
+        correct_answer = 1
 
     if question_text and option1 and option2:
         conn = get_db()
@@ -865,7 +998,7 @@ def admin_add_question(course_key):
         cur.execute("""
             INSERT INTO questions (course_key, position, question_text, option1, option2, correct_answer)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (course_key, next_pos, question_text, option1, option2, int(correct_answer)))
+        """, (course_key, next_pos, question_text, option1, option2, correct_answer))
         conn.commit()
         cur.close()
         conn.close()
@@ -887,4 +1020,7 @@ def admin_delete_question(course_key, question_id):
 init_db()
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Debug mode now only turns on if you explicitly set FLASK_DEBUG=1 —
+    # it will never accidentally ship on in production.
+    debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(debug=debug_mode, host="0.0.0.0", port=5000)

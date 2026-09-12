@@ -1,16 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Courses — EduNova AI{% endblock %}
+{% block body_class %}glass-page{% endblock %}
+{% block page_class %}glass-dashboard-page{% endblock %}
 {% block content %}
-<div class="page-header">
-    <div class="page-eyebrow">YOUR COURSES</div>
-    <h1>Welcome back, {{ session.name }}.</h1>
-    <p class="page-sub">Pick a subject to continue, or start something new.</p>
-</div>
+<div class="dashboard-glow dashboard-glow-one"></div>
+<div class="dashboard-glow dashboard-glow-two"></div>
 
-<div class="course-grid">
+<section class="dashboard-hero">
+    <div>
+        <div class="glass-eyebrow">YOUR LEARNING SPACE</div>
+        <h1>Welcome back, {{ session.name }}.</h1>
+        <p>Pick a subject to continue, or start something new.</p>
+    </div>
+    <a href="{{ url_for('ai_tutor_page') }}" class="glass-cta dashboard-cta">Ask AI Tutor <span class="cta-arrow">↗</span></a>
+</section>
+
+<div class="course-grid glass-course-grid">
     {% for key, course in courses.items() %}
     {% set p = progress.get(key) %}
-    <a href="{{ url_for('course_view', course_key=key) }}" class="course-card">
+    <a href="{{ url_for('course_view', course_key=key) }}" class="course-card glass-course-card">
         <div class="course-card-top">
             <span class="course-icon icon-{{ course.icon }}"></span>
             <span class="course-status status-{{ (p.learning_status if p else 'Not Started') | replace(' ', '-') | lower }}">
@@ -21,8 +29,15 @@
         <p>{{ course.topics | length }} topics · 5-question check</p>
         {% if p and p.attempts > 0 %}
         <div class="course-score">Last score: <strong>{{ p.score }}/5</strong> — Grade {{ p.grade }}</div>
+        {% else %}
+        <div class="course-open">Start learning <span>→</span></div>
         {% endif %}
     </a>
     {% endfor %}
 </div>
+
+<section class="dashboard-bottom-glass">
+    <div><span class="mini-dot"></span><strong>Learn at your pace</strong><p>Study notes, quizzes and AI explanations in one place.</p></div>
+    <div><span class="mini-dot"></span><strong>Need help?</strong><p>Open AI Tutor for step-by-step explanations.</p></div>
+</section>
 {% endblock %}

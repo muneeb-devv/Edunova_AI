@@ -17,6 +17,7 @@
 <div class="timer-bar"><div class="timer-fill" id="timerFill"></div></div>
 
 <form method="POST" action="{{ url_for('submit_quiz', course_key=course_key) }}" id="quizForm" class="quiz-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
     {% for q in quiz_questions %}
     {% set qnum = loop.index0 %}
     <fieldset class="quiz-question">

@@ -1,33 +1,61 @@
 {% extends "base.html" %}
-{% block title %}EduNova AI — Learn, Quiz, Grow{% endblock %}
-{% block page_class %}page-landing{% endblock %}
+{% block title %}EduNova AI — Learn smarter, achieve more{% endblock %}
+{% block body_class %}glass-page{% endblock %}
+{% block page_class %}page-landing glass-landing{% endblock %}
 {% block content %}
-<section class="hero">
-    <div class="hero-wordmark"><span class="brand-mark">✦</span> EduNova AI</div>
-    <div class="hero-eyebrow">AN INTELLIGENT E-LEARNING &amp; ASSESSMENT PLATFORM</div>
-    <h1 class="hero-title">A quiet corner<br>to actually <em>learn</em> the subject,<br>not just pass the quiz.</h1>
-    <p class="hero-sub">Read the notes, sit the five-question check, and ask the AI tutor whenever something doesn't click. Your progress is saved — no cramming required.</p>
-    <div class="hero-actions">
-        <a href="{{ url_for('register') }}" class="btn btn-primary">Create your account</a>
-        <a href="{{ url_for('login') }}" class="btn btn-ghost">I already have one</a>
+<div class="glass-glow glass-glow-one"></div>
+<div class="glass-glow glass-glow-two"></div>
+
+<section class="glass-hero">
+    <div class="glass-hero-copy">
+        <div class="glass-proof" aria-label="Rated 4.9 out of 5 by 2700 plus customers">
+            <span class="stars" aria-hidden="true">★★★★★</span>
+            <span>Rated 4.9/5 by 2700+ customers</span>
+        </div>
+
+        <div class="glass-eyebrow">INTELLIGENT E-LEARNING &amp; ASSESSMENT</div>
+        <h1>Learn smarter,<br><span>achieve more.</span></h1>
+        <p class="glass-hero-sub">
+            Learn concepts clearly, test your knowledge, track your progress, and ask an AI tutor whenever something doesn't click.
+        </p>
+
+        <div class="glass-hero-actions">
+            <a href="{{ url_for('register') }}" class="glass-cta">
+                Get Started Now <span class="cta-arrow">↗</span>
+            </a>
+            <a href="{{ url_for('login') }}" class="glass-secondary">I already have an account</a>
+        </div>
+
+        <div class="glass-mini-proof">
+            <span class="mini-dot"></span> C++, Physics &amp; ICT · AI-powered learning
+        </div>
+    </div>
+
+    <div class="glass-hero-visual" aria-hidden="true">
+        <div class="orb-halo"></div>
+        <video class="glass-orb" autoplay loop muted playsinline preload="metadata">
+            <source src="https://future.co/images/homepage/glassy-orb/orb-purple.webm" type="video/webm">
+        </video>
+        <div class="orb-label">
+            <span class="orb-label-dot"></span> AI learning, in real time
+        </div>
     </div>
 </section>
 
-<section class="landing-grid">
-    <div class="landing-card">
-        <span class="landing-card-index">01</span>
-        <h3>Read</h3>
-        <p>Short, focused notes for C++, Physics, and ICT — no fluff, just what you need to know.</p>
+<section class="trust-strip">
+    <p>Trusted by top-tier product companies</p>
+    <div class="trust-logos">
+        <span>vertex</span>
+        <span>northstar</span>
+        <span>orbit</span>
+        <span>linear</span>
+        <span>acme</span>
     </div>
-    <div class="landing-card">
-        <span class="landing-card-index">02</span>
-        <h3>Check</h3>
-        <p>A five-question quiz per course, graded instantly, with a clear breakdown of what you missed.</p>
-    </div>
-    <div class="landing-card">
-        <span class="landing-card-index">03</span>
-        <h3>Ask</h3>
-        <p>Stuck on a concept? The AI tutor explains it a different way until it makes sense.</p>
-    </div>
+</section>
+
+<section class="landing-features">
+    <div class="feature-glass-card"><span>01</span><h3>Learn</h3><p>Short, focused course notes that keep the important concepts easy to understand.</p></div>
+    <div class="feature-glass-card"><span>02</span><h3>Practice</h3><p>Take course quizzes, get instant results, and see exactly where you need improvement.</p></div>
+    <div class="feature-glass-card"><span>03</span><h3>Ask AI</h3><p>Use the AI Tutor for step-by-step explanations when a concept does not click.</p></div>
 </section>
 {% endblock %}

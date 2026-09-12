@@ -4,13 +4,13 @@
 <div class="page-header">
     <div class="page-eyebrow">AI TUTOR</div>
     <h1>Ask anything about your courses</h1>
-    <p class="page-sub">Powered by Groq (free tier, Llama models). Pick a subject for more focused answers.</p>
+    <p class="page-sub">Powered by OpenRouter. Pick a subject for more focused answers.</p>
 </div>
 
 {% if not ai_enabled %}
 <div class="ai-disabled-notice">
     The AI Tutor isn't configured yet. The server owner needs to set the
-    <code>GROQ_API_KEY</code> environment variable to enable it.
+    <code>OPENROUTER_API_KEY</code> environment variable to enable it.
 </div>
 {% endif %}
 
@@ -65,9 +65,10 @@ chatForm.addEventListener('submit', async (e) => {
     const thinking = addBubble('Thinking…', 'ai');
 
     try {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
         const res = await fetch('/api/ai-tutor', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify({message, course_key: courseSelect.value})
         });
         const data = await res.json();

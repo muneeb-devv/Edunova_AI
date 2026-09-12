@@ -8,6 +8,7 @@
     <p class="auth-sub">Pick up right where you left off.</p>
 
     <form method="POST" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
         <label>Roll number
             <input type="text" name="roll" required autofocus>
         </label>

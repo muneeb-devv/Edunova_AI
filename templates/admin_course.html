@@ -12,6 +12,7 @@
 <div class="admin-panel">
     <h2>Course details</h2>
     <form method="POST" action="{{ url_for('admin_update_course', course_key=course.key) }}" class="admin-inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
         <label>Title
             <input type="text" name="title" value="{{ course.title }}" required>
         </label>
@@ -29,6 +30,7 @@
         <div class="admin-item">
             <div class="admin-item-body">{{ topic.text }}</div>
             <form method="POST" action="{{ url_for('admin_delete_topic', course_key=course.key, topic_id=topic.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
                 <button type="submit" class="btn-danger-sm">Remove</button>
             </form>
         </div>
@@ -37,6 +39,7 @@
         {% endfor %}
     </div>
     <form method="POST" action="{{ url_for('admin_add_topic', course_key=course.key) }}" class="admin-inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
         <label>New topic line
             <input type="text" name="text" placeholder="e.g. Pointers store the address of a variable." required>
         </label>
@@ -57,6 +60,7 @@
                 </div>
             </div>
             <form method="POST" action="{{ url_for('admin_delete_question', course_key=course.key, question_id=q.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
                 <button type="submit" class="btn-danger-sm">Remove</button>
             </form>
         </div>
@@ -66,6 +70,7 @@
     </div>
 
     <form method="POST" action="{{ url_for('admin_add_question', course_key=course.key) }}" class="form" style="margin-top:18px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
         <label>Question
             <input type="text" name="question_text" placeholder="e.g. What does a for loop do?" required>
         </label>

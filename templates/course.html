@@ -14,6 +14,7 @@
 </ol>
 
 <form method="POST" action="{{ url_for('complete_learning', course_key=course_key) }}" class="complete-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
     <label class="confirm-check">
         <input type="checkbox" id="confirmRead" required>
         I've read through all the notes above.

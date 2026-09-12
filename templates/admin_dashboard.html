@@ -31,6 +31,7 @@
             <a href="{{ url_for('admin_course_edit', course_key=course.key) }}" class="btn btn-ghost">Edit</a>
             <form method="POST" action="{{ url_for('admin_delete_course', course_key=course.key) }}"
                   onsubmit="return confirm('Delete {{ course.title }} and all its topics, questions, and student progress? This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
                 <button type="submit" class="btn-danger-sm">Delete</button>
             </form>
         </div>
@@ -43,6 +44,7 @@
 <div class="admin-panel">
     <h2>Add a new course</h2>
     <form method="POST" action="{{ url_for('admin_add_course') }}" class="admin-inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
         <label>Course title
             <input type="text" name="title" placeholder="e.g. Chemistry" required>
         </label>

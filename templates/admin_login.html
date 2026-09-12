@@ -8,6 +8,7 @@
     <p class="auth-sub">Manage courses, topics, and quiz questions.</p>
 
     <form method="POST" class="form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token }}">
         <label>Admin password
             <div class="password-field">
                 <input type="password" name="password" required autofocus>
