@@ -1,24 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Courses — EduNova AI{% endblock %}
-{% block body_class %}glass-page{% endblock %}
-{% block page_class %}glass-dashboard-page{% endblock %}
 {% block content %}
-<div class="dashboard-glow dashboard-glow-one"></div>
-<div class="dashboard-glow dashboard-glow-two"></div>
-
-<section class="dashboard-hero">
+<div class="page-header" style="display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap;">
     <div>
-        <div class="glass-eyebrow">YOUR LEARNING SPACE</div>
+        <div class="page-eyebrow">YOUR LEARNING SPACE</div>
         <h1>Welcome back, {{ session.name }}.</h1>
-        <p>Pick a subject to continue, or start something new.</p>
+        <p class="page-sub">Pick a subject to continue, or start something new.</p>
     </div>
-    <a href="{{ url_for('ai_tutor_page') }}" class="glass-cta dashboard-cta">Ask AI Tutor <span class="cta-arrow">↗</span></a>
-</section>
+    <a href="{{ url_for('ai_tutor_page') }}" class="btn btn-ghost">Ask AI Tutor →</a>
+</div>
 
-<div class="course-grid glass-course-grid">
+<div class="course-grid">
     {% for key, course in courses.items() %}
     {% set p = progress.get(key) %}
-    <a href="{{ url_for('course_view', course_key=key) }}" class="course-card glass-course-card">
+    <a href="{{ url_for('course_view', course_key=key) }}" class="course-card">
         <div class="course-card-top">
             <span class="course-icon icon-{{ course.icon }}"></span>
             <span class="course-status status-{{ (p.learning_status if p else 'Not Started') | replace(' ', '-') | lower }}">
@@ -35,9 +30,4 @@
     </a>
     {% endfor %}
 </div>
-
-<section class="dashboard-bottom-glass">
-    <div><span class="mini-dot"></span><strong>Learn at your pace</strong><p>Study notes, quizzes and AI explanations in one place.</p></div>
-    <div><span class="mini-dot"></span><strong>Need help?</strong><p>Open AI Tutor for step-by-step explanations.</p></div>
-</section>
 {% endblock %}
